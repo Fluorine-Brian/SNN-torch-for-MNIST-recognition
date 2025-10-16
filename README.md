@@ -79,57 +79,62 @@ The script will prompt you to:
 
 ---
 
-- ## 🧠 SNN Principles & Model Architecture
+## 🧠 SNN Principles & Model Architecture
 
-  This project simulates an SNN over discrete time steps ($T=6$ by default in `model.py`). Unlike traditional ANNs, SNNs are stateful and process information over time. Here’s how it's implemented in this codebase:
+This project simulates an SNN over discrete time steps ($T=6$ by default in `model.py`). Unlike traditional ANNs, SNNs are stateful and process information over time. Here’s how it's implemented in this codebase:
 
-  ### 1. Input Encoding
+### 1. Input Encoding
 
-  A static MNIST image ($28 \times 28$) must be converted into a temporal format. This project uses **direct input encoding**. The flattened image vector is simply copied and presented to the network at each of the $T$ time steps. This is handled by the `add_dimention` function in `layer.py`, which effectively simulates a constant input current over the simulation duration.
+A static MNIST image ($28 \times 28$) must be converted into a temporal format. This project uses **direct input encoding**. The flattened image vector is simply copied and presented to the network at each of the $T$ time steps. This is handled by the `add_dimention` function in `layer.py`, which effectively simulates a constant input current over the simulation duration.
 
-  ### 2. The Leaky Integrate-and-Fire (LIF) Neuron
+### 2. The Leaky Integrate-and-Fire (LIF) Neuron
 
-  The core processing unit is the LIF neuron, implemented in the `LIFSpike` class in `layer.py`. It mimics a biological neuron by maintaining a `membrane potential`, which changes over time.
+The core processing unit is the LIF neuron, implemented in the `LIFSpike` class in `layer.py`. It mimics a biological neuron by maintaining a `membrane potential`, which changes over time.
 
-  The simulation loop inside `LIFSpike.forward` performs three key steps at each time step $t$:
+The simulation loop inside `LIFSpike.forward` performs three key steps at each time step $t$:
 
-  1.  **Integrate (with Leak)**: The membrane potential `mem` is updated based on the new input from the previous layer and its previous state. The `self.tau` parameter controls the "leak," causing the potential to decay over time if there's no input. The update rule is:
-      $$
-      V[t] = V[t-1] \cdot \tau + I[t]
-      $$
-      Where $V[t]$ is the membrane potential at time $t$, $\tau$ is the decay constant, and $I[t]$ is the input from the connected layer.
+1.  **Integrate (with Leak)**: The membrane potential `mem` is updated based on the new input from the previous layer and its previous state. The `self.tau` parameter controls the "leak," causing the potential to decay over time if there's no input. The update rule is:
 
-  2.  **Fire**: If the membrane potential $V[t]$ exceeds a predefined `self.thresh` (threshold), the neuron generates an output spike (a value of 1). Otherwise, the output is 0.
-      $$
-      S[t] = \begin{cases} 1, & \text{if } V[t] > V_{th} \\ 0, & \text{otherwise} \end{cases}
-      $$
+    $$
+    V[t] = V[t-1] \cdot \tau + I[t]
+    $$
 
-  3.  **Reset**: After firing a spike, the neuron's potential needs to be reset. This implementation uses a "soft reset" mechanism: `mem = (1 - spike) * mem`. If a spike occurs (`spike=1`), the potential is reset to 0. If not (`spike=0`), it remains unchanged.
+    Where $V[t]$ is the membrane potential at time $t$, $\tau$ is the decay constant, and $I[t]$ is the input from the connected layer.
 
-  ### 3. The Challenge: Training with Backpropagation
+2.  **Fire**: If the membrane potential $V[t]$ exceeds a predefined `self.thresh` (threshold), the neuron generates an output spike (a value of 1). Otherwise, the output is 0.
 
-  The "Fire" step is a step function, which is non-differentiable. Its derivative is zero almost everywhere and infinite at the threshold. This "dead gradient" problem prevents standard backpropagation from working.
+    $$
+    S[t] = \begin{cases} 1, & \text{if } V[t] > V_{th} \\ 0, & \text{otherwise} \end{cases}
+    $$
 
-  ### 4. The Solution: Surrogate Gradients
+3.  **Reset**: After firing a spike, the neuron's potential needs to be reset. This implementation uses a "soft reset" mechanism: `mem = (1 - spike) * mem`. If a spike occurs (`spike=1`), the potential is reset to 0. If not (`spike=0`), it remains unchanged.
 
-  To solve this, we use the **surrogate gradient** method. During the forward pass, we use the actual step function for spiking. However, during the backward pass, we replace its non-existent gradient with a "surrogate"—a well-behaved, continuous function that approximates it.
+### 3. The Challenge: Training with Backpropagation
 
-  This is implemented in the `ZIF` class (`torch.autograd.Function`) in `layer.py`:
-  -   `ZIF.forward`: Implements the standard step function `(input > 0).float()`.
-  -   `ZIF.backward`: Implements the surrogate gradient. The code uses a triangular-shaped function centered at the threshold:
-      $$
-      \frac{\partial S}{\partial V} \approx \max\left(0, \frac{1}{\gamma^2}(\gamma - \lvert V - V_{th} \rvert)\right)
-      $$
-      Here, `gamma` controls the width of the triangle, defining the region where gradients can flow back through the neuron. This allows the network to learn effectively using standard optimizers like Adam.
+The "Fire" step is a step function, which is non-differentiable. Its derivative is zero almost everywhere and infinite at the threshold. This "dead gradient" problem prevents standard backpropagation from working.
 
-  ### 5. Network Architecture & Output Decoding
+### 4. The Solution: Surrogate Gradients
 
-  The overall architecture, defined in `model.py`, is an MLP with the following structure:
+To solve this, we use the **surrogate gradient** method. During the forward pass, we use the actual step function for spiking. However, during the backward pass, we replace its non-existent gradient with a "surrogate"—a well-behaved, continuous function that approximates it.
 
-  `Input (784) -> Linear(512) -> LIF -> Linear(512) -> LIF -> Linear(10)`
+This is implemented in the `ZIF` class (`torch.autograd.Function`) in `layer.py`:
+-   `ZIF.forward`: Implements the standard step function `(input > 0).float()`.
+-   `ZIF.backward`: Implements the surrogate gradient. The code uses a triangular-shaped function centered at the threshold:
 
-  -   **Time-Aware Layers**: Standard `nn.Linear` layers are wrapped in the `tdLayer` class, which uses `SeqToANNContainer` to apply the linear transformation independently at each time step.
-  -   **Output Decoding**: The final layer is a linear layer that outputs a potential for each of the 10 classes at each time step. To get a final prediction, the model averages these potentials across the time dimension: `x = x.mean(1)`. This is a form of "rate coding," where the class corresponding to the neuron with the highest average potential is chosen as the final prediction. This final tensor is then passed to a standard `CrossEntropyLoss` function for training.
+    $$
+    \frac{\partial S}{\partial V} \approx \max\left(0, \frac{1}{\gamma^2}(\gamma - \lvert V - V_{th} \rvert)\right)
+    $$
+
+    Here, `gamma` controls the width of the triangle, defining the region where gradients can flow back through the neuron. This allows the network to learn effectively using standard optimizers like Adam.
+
+### 5. Network Architecture & Output Decoding
+
+The overall architecture, defined in `model.py`, is an MLP with the following structure:
+
+`Input (784) -> Linear(512) -> LIF -> Linear(512) -> LIF -> Linear(10)`
+
+-   **Time-Aware Layers**: Standard `nn.Linear` layers are wrapped in the `tdLayer` class, which uses `SeqToANNContainer` to apply the linear transformation independently at each time step.
+-   **Output Decoding**: The final layer is a linear layer that outputs a potential for each of the 10 classes at each time step. To get a final prediction, the model averages these potentials across the time dimension: `x = x.mean(1)`. This is a form of "rate coding," where the class corresponding to the neuron with the highest average potential is chosen as the final prediction. This final tensor is then passed to a standard `CrossEntropyLoss` function for training.
 
 ---
 
