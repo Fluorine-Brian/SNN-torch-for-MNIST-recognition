@@ -5,7 +5,7 @@
 
 This project provides a clear and well-documented implementation of a Spiking Neural Network (SNN) for classifying MNIST handwritten digits. It is built entirely in PyTorch and serves as an excellent educational resource for understanding how to simulate SNNs, handle their temporal dynamics, and train them using surrogate gradients.
 
-[infer figure](infer figure.jpg)
+![infer figure](infer figure.jpg)
 
 ---
 
@@ -96,15 +96,15 @@ The core processing unit is the LIF neuron, implemented in the `LIFSpike` class 
 The simulation loop inside `LIFSpike.forward` performs three key steps at each time step $t$:
 
 1.  **Integrate (with Leak)**: The membrane potential `mem` is updated based on the new input from the previous layer and its previous state. The `self.tau` parameter controls the "leak," causing the potential to decay over time if there's no input. The update rule is:
-    $$
+    $
     V[t] = V[t-1] \cdot \tau + I[t]
-    $$
+    $
     Where $V[t]$ is the membrane potential at time $t$, $\tau$ is the decay constant, and $I[t]$ is the input from the connected layer.
 
 2.  **Fire**: If the membrane potential $V[t]$ exceeds a predefined `self.thresh` (threshold), the neuron generates an output spike (a value of 1). Otherwise, the output is 0.
-    $$
+    $
     S[t] = \begin{cases} 1, & \text{if } V[t] > V_{th} \\ 0, & \text{otherwise} \end{cases}
-    $$
+    $
 
 3.  **Reset**: After firing a spike, the neuron's potential needs to be reset. This implementation uses a "soft reset" mechanism: `mem = (1 - spike) * mem`. If a spike occurs (`spike=1`), the potential is reset to 0. If not (`spike=0`), it remains unchanged.
 
